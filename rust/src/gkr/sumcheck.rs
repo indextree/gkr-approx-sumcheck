@@ -7,6 +7,51 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use super::poly::*;
 
+// =============================================================================
+// Approximate Sum-Check Protocol
+// Based on "Sum-Check Protocol for Approximate Computations" (2025)
+//
+// Key difference from standard sumcheck:
+// - Standard: g_i(0) + g_i(1) = c_i (exact equality)
+// - Approximate: |g_i(0) + g_i(1) - c_i| <= epsilon_i (within error tolerance)
+//
+// The prover sends error bounds (delta_i) along with each round's polynomial.
+// Errors accumulate across rounds according to the paper's analysis.
+// =============================================================================
+
+/// Approximate sumcheck proof structure
+#[derive(Clone, Debug)]
+pub struct ApproxSumcheckProof<S: PrimeField> {
+    /// Univariate polynomials for each round (coefficients)
+    pub polynomials: Vec<Vec<S>>,
+    /// Error bounds for each round (delta_i)
+    pub deltas: Vec<S>,
+    /// Random challenges for each round
+    pub r: Vec<S>,
+}
+
+impl<S: PrimeField> ApproxSumcheckProof<S> {
+    pub fn new(polynomials: Vec<Vec<S>>, deltas: Vec<S>, r: Vec<S>) -> Self {
+        ApproxSumcheckProof {
+            polynomials,
+            deltas,
+            r,
+        }
+    }
+
+    /// Convert to standard proof format (backward compatibility)
+    pub fn to_standard_proof(&self) -> (Vec<Vec<S>>, Vec<S>) {
+        (self.polynomials.clone(), self.r.clone())
+    }
+}
+
+/// Verification result for approximate sumcheck
+#[derive(Clone, Debug)]
+pub struct ApproxVerifyResult<S: PrimeField> {
+    pub is_valid: bool,
+    pub accumulated_error: S,
+}
+
 pub fn convert_s_to_fr<S>(v: &S) -> mimc_rs::Fr
 where
     S: PrimeField<Repr = [u8; 32]>,
@@ -32,7 +77,37 @@ fn n_trailing_bits<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
     res.into_iter().unique().collect()
 }
 
-// only can be run for f: add_i(f1 + f2) + mult_i(f1 * f2)
+/// Compute absolute value in the field.
+/// For a prime field F_p, we consider x "negative" if x > p/2.
+/// |x| = min(x, p - x)
+pub fn abs_field<S: PrimeField<Repr = [u8; 32]>>(x: S) -> S {
+    // Get the value as bytes and convert to check magnitude
+    let x_repr = x.to_repr();
+    let neg_x = S::zero() - x;
+    let neg_x_repr = neg_x.to_repr();
+
+    // Compare by checking which is "smaller" (closer to zero)
+    // This is a simplified comparison - in practice, compare byte arrays
+    if x_repr.as_ref() < neg_x_repr.as_ref() {
+        x
+    } else {
+        neg_x
+    }
+}
+
+/// Check if x <= y in the field (for small values near 0)
+pub fn field_le<S: PrimeField<Repr = [u8; 32]>>(x: S, y: S) -> bool {
+    let x_repr = x.to_repr();
+    let y_repr = y.to_repr();
+    x_repr.as_ref() <= y_repr.as_ref()
+}
+
+// =============================================================================
+// Optimized Sumcheck Prover with Approximate Support
+// =============================================================================
+
+/// Optimized sumcheck prover for the form: add_i(f1 + f2) + mult_i(f1 * f2)
+/// Now supports approximate computations with error bounds.
 pub fn prove_sumcheck_opt<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
     add_wire: &Vec<Vec<S>>,
     mult_wire: &Vec<Vec<S>>,
@@ -155,6 +230,27 @@ pub fn prove_sumcheck_opt<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
     (proof, r)
 }
 
+/// Approximate sumcheck prover with error bounds
+/// Returns ApproxSumcheckProof containing polynomials, deltas, and challenges
+pub fn prove_approx_sumcheck_opt<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
+    add_wire: &Vec<Vec<S>>,
+    mult_wire: &Vec<Vec<S>>,
+    add_i: &Vec<Vec<S>>,
+    mult_i: &Vec<Vec<S>>,
+    f1: &Vec<Vec<S>>,
+    f2: &Vec<Vec<S>>,
+    v: usize,
+    max_delta: S,
+) -> ApproxSumcheckProof<S> {
+    let (proof, r) = prove_sumcheck_opt(add_wire, mult_wire, add_i, mult_i, f1, f2, v);
+
+    // For exact computation, all deltas are the max_delta (or zero for exact)
+    let deltas = vec![max_delta; proof.len()];
+
+    ApproxSumcheckProof::new(proof, deltas, r)
+}
+
+/// Standard sumcheck prover (backward compatible)
 pub fn prove_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
     g: &Vec<Vec<S>>,
     v: usize,
@@ -211,4 +307,153 @@ pub fn prove_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
     r.push(convert_fr_to_s(r_v));
 
     (proof, r)
+}
+
+/// Approximate sumcheck prover (generic version)
+pub fn prove_approx_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
+    g: &Vec<Vec<S>>,
+    v: usize,
+    max_delta: S,
+) -> ApproxSumcheckProof<S> {
+    let (proof, r) = prove_sumcheck(g, v);
+    let deltas = vec![max_delta; proof.len()];
+    ApproxSumcheckProof::new(proof, deltas, r)
+}
+
+// =============================================================================
+// Approximate Sumcheck Verifier
+// =============================================================================
+
+/// Verify approximate sumcheck proof
+///
+/// Instead of checking g_i(0) + g_i(1) == expected (exact), we check:
+/// |g_i(0) + g_i(1) - expected| <= epsilon_i (within error tolerance)
+///
+/// Returns ApproxVerifyResult with validity and accumulated error
+pub fn verify_approx_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
+    claim: S,
+    approx_proof: &ApproxSumcheckProof<S>,
+    v: usize,
+    total_epsilon: Option<S>,
+) -> ApproxVerifyResult<S> {
+    let mimc = Mimc7::new(91);
+    let proof = &approx_proof.polynomials;
+    let deltas = &approx_proof.deltas;
+    let r = &approx_proof.r;
+    let bn = proof.len();
+
+    // Compute total allowed error from per-round deltas
+    let total_eps = total_epsilon.unwrap_or_else(|| {
+        deltas.iter().fold(S::zero(), |acc, d| acc + *d)
+    });
+
+    let mut accumulated_error = S::zero();
+    let mut expected = claim;
+
+    // Special case for v == 1
+    if v == 1 {
+        let q_zero = eval_univariate(&proof[0], S::zero());
+        let q_one = eval_univariate(&proof[0], S::one());
+        let sum_val = q_zero + q_one;
+        let error = abs_field(sum_val - claim);
+
+        return ApproxVerifyResult {
+            is_valid: field_le(error, total_eps),
+            accumulated_error: error,
+        };
+    }
+
+    for i in 0..bn {
+        let q_zero = eval_univariate(&proof[i], S::zero());
+        let q_one = eval_univariate(&proof[i], S::one());
+
+        // Approximate check: |g_i(0) + g_i(1) - expected| <= delta_i
+        let actual_sum = q_zero + q_one;
+        let round_error = abs_field(actual_sum - expected);
+
+        // Check if round error is within allowed delta for this round
+        if !field_le(round_error, deltas[i]) {
+            return ApproxVerifyResult {
+                is_valid: false,
+                accumulated_error: accumulated_error + round_error,
+            };
+        }
+
+        accumulated_error = accumulated_error + round_error;
+
+        // Verify the random challenge was computed correctly (Fiat-Shamir)
+        let mimc_coeffs: Vec<Fr> = proof[i].iter().map(|s| convert_s_to_fr(s)).collect();
+        let expected_r: S = convert_fr_to_s(mimc.multi_hash(mimc_coeffs, &Fr::from(0)));
+        if expected_r != r[i] {
+            return ApproxVerifyResult {
+                is_valid: false,
+                accumulated_error,
+            };
+        }
+
+        // Update expected value for next round
+        expected = eval_univariate(&proof[i], r[i]);
+    }
+
+    // Check total accumulated error is within bounds
+    ApproxVerifyResult {
+        is_valid: field_le(accumulated_error, total_eps),
+        accumulated_error,
+    }
+}
+
+/// Simplified approximate sumcheck verifier (backward compatible interface)
+/// Uses a single epsilon tolerance for all rounds
+pub fn verify_approx_sumcheck_simple<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
+    claim: S,
+    proof: &Vec<Vec<S>>,
+    r: &Vec<S>,
+    v: usize,
+    epsilon: S,
+) -> bool {
+    let mimc = Mimc7::new(91);
+    let bn = proof.len();
+
+    if v == 1 {
+        let q_zero = eval_univariate(&proof[0], S::zero());
+        let q_one = eval_univariate(&proof[0], S::one());
+        let sum_val = q_zero + q_one;
+        let error = abs_field(sum_val - claim);
+        return field_le(error, epsilon);
+    }
+
+    let mut expected = claim;
+    for i in 0..bn {
+        let q_zero = eval_univariate(&proof[i], S::zero());
+        let q_one = eval_univariate(&proof[i], S::one());
+
+        // Approximate check instead of exact equality
+        let actual_sum = q_zero + q_one;
+        let error = abs_field(actual_sum - expected);
+
+        if !field_le(error, epsilon) {
+            return false;
+        }
+
+        let mimc_coeffs: Vec<Fr> = proof[i].iter().map(|s| convert_s_to_fr(s)).collect();
+        let expected_r: S = convert_fr_to_s(mimc.multi_hash(mimc_coeffs, &Fr::from(0)));
+        if expected_r != r[i] {
+            return false;
+        }
+
+        expected = eval_univariate(&proof[i], r[i]);
+    }
+
+    true
+}
+
+/// Standard sumcheck verifier (exact, backward compatible)
+pub fn verify_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
+    claim: S,
+    proof: &Vec<Vec<S>>,
+    r: &Vec<S>,
+    v: usize,
+) -> bool {
+    // Use approximate verifier with zero epsilon for exact verification
+    verify_approx_sumcheck_simple(claim, proof, r, v, S::zero())
 }

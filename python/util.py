@@ -1,4 +1,7 @@
-from ethsnarks import field
+try:
+    from ethsnarks import field
+except ImportError:
+    import field
 
 def length_expansion(l: list[field.FQ], v: int):
     if len(l) == v:

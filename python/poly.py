@@ -1,4 +1,7 @@
-from ethsnarks import field
+try:
+    from ethsnarks import field
+except ImportError:
+    import field
 from typing import Callable
 from util import length_expansion
 
