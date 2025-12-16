@@ -1,7 +1,7 @@
 # Proof aggregator using recursive GKR scheme with Approximate Sum-Check
 This is Cli tool for **generation of aggregated proof for multiple inputs**.
 
-This implementation includes **Approximate Sum-Check Protocol** based on the paper ["Sum-Check Protocol for Approximate Computations"](https://eprint.iacr.org/2025/XXX) (2025).
+This implementation includes **Approximate Sum-Check Protocol** based on the paper ["Sum-Check Protocol for Approximate Computations"](https://eprint.iacr.org/2025/2152.pdf) (2025).
 
 In this version, it supports circom circuit.
 
