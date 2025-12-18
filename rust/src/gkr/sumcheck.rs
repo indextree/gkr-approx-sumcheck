@@ -352,8 +352,8 @@ pub fn verify_approx_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
 
     // Special case for v == 1
     if v == 1 {
-        let q_zero = eval_univariate(&proof[0], S::zero());
-        let q_one = eval_univariate(&proof[0], S::one());
+        let q_zero = eval_univariate(&proof[0], &S::zero());
+        let q_one = eval_univariate(&proof[0], &S::one());
         let sum_val = q_zero + q_one;
         let error = abs_field(sum_val - claim);
 
@@ -364,8 +364,8 @@ pub fn verify_approx_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
     }
 
     for i in 0..bn {
-        let q_zero = eval_univariate(&proof[i], S::zero());
-        let q_one = eval_univariate(&proof[i], S::one());
+        let q_zero = eval_univariate(&proof[i], &S::zero());
+        let q_one = eval_univariate(&proof[i], &S::one());
 
         // Approximate check: |g_i(0) + g_i(1) - expected| <= delta_i
         let actual_sum = q_zero + q_one;
@@ -392,7 +392,7 @@ pub fn verify_approx_sumcheck<S: PrimeField<Repr = [u8; 32]> + std::hash::Hash>(
         }
 
         // Update expected value for next round
-        expected = eval_univariate(&proof[i], r[i]);
+        expected = eval_univariate(&proof[i], &r[i]);
     }
 
     // Check total accumulated error is within bounds
@@ -415,8 +415,8 @@ pub fn verify_approx_sumcheck_simple<S: PrimeField<Repr = [u8; 32]> + std::hash:
     let bn = proof.len();
 
     if v == 1 {
-        let q_zero = eval_univariate(&proof[0], S::zero());
-        let q_one = eval_univariate(&proof[0], S::one());
+        let q_zero = eval_univariate(&proof[0], &S::zero());
+        let q_one = eval_univariate(&proof[0], &S::one());
         let sum_val = q_zero + q_one;
         let error = abs_field(sum_val - claim);
         return field_le(error, epsilon);
@@ -424,8 +424,8 @@ pub fn verify_approx_sumcheck_simple<S: PrimeField<Repr = [u8; 32]> + std::hash:
 
     let mut expected = claim;
     for i in 0..bn {
-        let q_zero = eval_univariate(&proof[i], S::zero());
-        let q_one = eval_univariate(&proof[i], S::one());
+        let q_zero = eval_univariate(&proof[i], &S::zero());
+        let q_one = eval_univariate(&proof[i], &S::one());
 
         // Approximate check instead of exact equality
         let actual_sum = q_zero + q_one;
@@ -441,7 +441,7 @@ pub fn verify_approx_sumcheck_simple<S: PrimeField<Repr = [u8; 32]> + std::hash:
             return false;
         }
 
-        expected = eval_univariate(&proof[i], r[i]);
+        expected = eval_univariate(&proof[i], &r[i]);
     }
 
     true

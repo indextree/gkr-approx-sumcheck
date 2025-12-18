@@ -130,6 +130,32 @@ println!("Result: {}", outputs[0].to_f32());
 println!("Error bound: {:?}", circuit.total_epsilon);
 ```
 
+#### Rust CLI
+```sh
+# Build the CLI (requires Rust nightly)
+cd rust
+rustup run nightly cargo build --release
+
+# Prove floating point sum
+./target/release/gkr-aggregator fp-sum --input "1.0,2.0,3.0,4.0"
+# Output: sum=10.0, epsilon=12582912, proof saved to fp_proof.json
+
+# Prove floating point product
+./target/release/gkr-aggregator fp-product --input "1.5,2.0,3.0,4.0"
+# Output: product=36.0, epsilon=12582912
+
+# Prove dot product of two vectors
+./target/release/gkr-aggregator fp-dot-product --a "1.0,2.0,3.0,4.0" --b "5.0,6.0,7.0,8.0"
+# Output: dot_product=70.0, epsilon=29360128
+
+# Run benchmark
+./target/release/gkr-aggregator fp-benchmark --operation sum --size 256
+# Output: throughput ~127K proofs/s (release build)
+
+# Verify a proof
+./target/release/gkr-aggregator fp-verify --proof fp_proof.json
+```
+
 #### Circom
 ```circom
 include "fp/ieee754.circom";
@@ -175,7 +201,7 @@ python test_gkr.py
 
 ### Benchmark Results (M3 Max, 2024, 48GB RAM, 16 cores, 40 GPUs)
 
-#### Single Operation Scaling
+#### Single Operation Scaling (Python)
 | Operation | Inputs | Prove Time | Verify Time | Proof Size | 
 |-----------|--------|------------|-------------|------------|
 | sum | 16 | ~5ms | ~5ms | 1.5KB |
@@ -184,6 +210,14 @@ python test_gkr.py
 | dot_product | 32 | ~9ms | ~7ms | 2.3KB |
 | dot_product | 128 | ~38ms | ~15ms | 4.4KB |
 | dot_product | 512 | ~396ms | ~24ms | 8.3KB |
+
+#### Rust CLI Performance (Release Build)
+| Operation | Inputs | Prove Time | Throughput |
+|-----------|--------|------------|------------|
+| sum | 64 | ~0.02ms | ~51K proofs/s |
+| sum | 256 | ~0.01ms | ~127K proofs/s |
+| product | 64 | ~0.02ms | ~50K proofs/s |
+| dot_product | 64 | ~0.02ms | ~49K proofs/s |
 
 #### Batch Aggregation Performance
 | Batch Size | Input Size | Total Prove | Throughput |

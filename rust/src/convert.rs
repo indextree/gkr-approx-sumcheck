@@ -485,7 +485,8 @@ fn convert_constraints_to_nodes(
         }
         for (coeff, x_i) in a {
             let e = sym_tbl.get(x_i);
-            if let Some(lookup_res) = e && lookup_res.0.depth() < DEPTH_LIMIT {
+            if let Some(lookup_res) = e {
+                if lookup_res.0.depth() < DEPTH_LIMIT {
                 let lookup_res_cloned = lookup_res.clone();
                 let coeff_fr = Fr::from_repr(coeff.clone().0).unwrap();
                 let new_coeff = FieldElement((coeff_fr * (Fr::zero() - Fr::one())).to_repr());
@@ -508,6 +509,7 @@ fn convert_constraints_to_nodes(
                     used.push(lookup_res_cloned.1);
                     continue;
                 }
+            }
             }
             if neg == true {
                 if coeff.clone() == minus_one {
@@ -543,13 +545,15 @@ fn convert_constraints_to_nodes(
         }
         for (coeff, x_i) in b {
             let e = sym_tbl.get(x_i);
-            if let Some(lookup_res) = e && lookup_res.0.depth() < DEPTH_LIMIT {
+            if let Some(lookup_res) = e {
+                if lookup_res.0.depth() < DEPTH_LIMIT {
                 let lookup_res_cloned = lookup_res.clone();
                 if coeff.clone() == lookup_res_cloned.2 {
                     node_b.push(lookup_res_cloned.0);
                     used.push(lookup_res_cloned.1);
                     continue;
                 }
+            }
             }
             if coeff.clone() == one {
                 let node = IntermediateNode::new_from_variable(x_i.clone());
