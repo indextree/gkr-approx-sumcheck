@@ -5,4 +5,7 @@
 *.r1cs
 *.json
 *.ptau
+*.wasm
+*.sym
+*.wtns
 **/__pycache__

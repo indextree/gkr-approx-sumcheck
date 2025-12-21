@@ -74,13 +74,39 @@ pub fn get_name(path: &String) -> String {
 }
 
 pub fn execute_circom(path: String, input_path: &String) -> (String, String) {
-    let _ = Command::new("circom")
+    let circom_out = Command::new("circom")
         .arg(path.clone())
         .arg("--r1cs")
         .arg("--sym")
         .arg("--wasm")
-        .output()
-        .expect("circom command failed");
+        .output();
+    let circom_out = match circom_out {
+        Ok(o) => o,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "Error: `circom` not found in PATH.\n\
+                     Please install Circom and ensure the `circom` binary is available.\n\
+                     See: https://docs.circom.io/getting-started/installation/"
+                );
+            } else {
+                eprintln!("Error: failed to run `circom`: {e}");
+            }
+            std::process::exit(1);
+        }
+    };
+    if !circom_out.status.success() {
+        eprintln!("Error: `circom` failed (exit={}).", circom_out.status);
+        let stdout = String::from_utf8_lossy(&circom_out.stdout);
+        let stderr = String::from_utf8_lossy(&circom_out.stderr);
+        if !stdout.trim().is_empty() {
+            eprintln!("circom stdout:\n{stdout}");
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("circom stderr:\n{stderr}");
+        }
+        std::process::exit(1);
+    }
     print!("");
     let path_str: Vec<&str> = path.as_str().split('/').collect();
     let mut path_cloned = path_str.clone();
@@ -102,13 +128,29 @@ pub fn execute_circom(path: String, input_path: &String) -> (String, String) {
         .join(witness_gen_name)
         .join(format!("{}.wasm", name));
 
-    let _ = Command::new("node")
+    let node_status = Command::new("node")
         .arg(witness_gen_file.clone())
         .arg(wasm)
         .arg(input_path.clone())
         .arg("witness.wtns")
-        .status()
-        .expect("witness calculator generation failed");
+        .status();
+    match node_status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!("Error: witness generation failed (exit={}).", s);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "Error: `node` not found in PATH (required to run the Circom witness generator)."
+                );
+            } else {
+                eprintln!("Error: failed to run `node`: {e}");
+            }
+            std::process::exit(1);
+        }
+    }
     print!("");
     (String::from(name), root_path)
 }
