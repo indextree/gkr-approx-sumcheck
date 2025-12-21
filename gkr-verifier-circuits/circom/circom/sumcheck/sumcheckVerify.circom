@@ -2,6 +2,24 @@ pragma circom 2.0.4;
 include "../poly/univariate.circom";
 
 // =============================================================================
+// Bit decomposition / range check helper
+// Enforces: 0 <= num < 2^n (as an integer embedded in the field)
+// =============================================================================
+template Num2Bits(n) {
+    signal input num;
+    signal output bits[n];
+
+    var sum = 0;
+    for (var i = 0; i < n; i++) {
+        // Witness assignment for bit extraction, then constrain correctness
+        bits[n - 1 - i] <-- (num >> i) & 1;
+        bits[n - 1 - i] * (1 - bits[n - 1 - i]) === 0;
+        sum += bits[n - 1 - i] * (1 << i);
+    }
+    sum === num;
+}
+
+// =============================================================================
 // Approximate Sum-Check Verifier Circuit
 // Based on "Sum-Check Protocol for Approximate Computations" (2025)
 //
@@ -105,7 +123,7 @@ template SumcheckVerify(v, nTerms) {
 // =============================================================================
 
 // Approximate Sumcheck Verifier with per-round error tolerance
-template ApproxSumcheckVerify(v, nTerms) {
+template ApproxSumcheckVerify(v, nTerms, epsilonBits) {
     signal input proofs[v][nTerms];
     signal input claim;
     signal input r[v - 1];
@@ -118,6 +136,7 @@ template ApproxSumcheckVerify(v, nTerms) {
     signal expected[v + 1];
     signal roundErrors[v];
     signal cumulativeErrors[v + 1];
+    signal slack[v];
     
     expected[0] <== claim;
     cumulativeErrors[0] <== 0;
@@ -125,6 +144,9 @@ template ApproxSumcheckVerify(v, nTerms) {
     component qZero[v];
     component qOne[v];
     component next[v - 1];
+    component deltaBits[v];
+    component errorBits[v];
+    component slackBits[v];
     
     for (var i = 0; i < v; i++) {
         // Evaluate polynomial at 0 and 1
@@ -157,10 +179,18 @@ template ApproxSumcheckVerify(v, nTerms) {
 
         // The round error must be <= delta[i]
         // For circuit, we use: error + slack = delta where slack >= 0
-        // This is enforced by the prover providing valid deltas
-        signal slack;
-        slack <== deltas[i] - roundErrors[i];
-        // In a full implementation, add range check that slack >= 0
+        slack[i] <== deltas[i] - roundErrors[i];
+
+        // Range checks (non-negativity + smallness) to make slack >= 0 meaningful in the field
+        // - deltas[i] is bounded (verifier-chosen / public input recommended)
+        // - roundErrors[i] is bounded (also forces correct errorSigns[i] for small errors)
+        // - slack[i] bounded ensures roundErrors[i] <= deltas[i]
+        deltaBits[i] = Num2Bits(epsilonBits);
+        deltaBits[i].num <== deltas[i];
+        errorBits[i] = Num2Bits(epsilonBits);
+        errorBits[i].num <== roundErrors[i];
+        slackBits[i] = Num2Bits(epsilonBits);
+        slackBits[i].num <== slack[i];
 
         // Accumulate errors
         cumulativeErrors[i + 1] <== cumulativeErrors[i] + roundErrors[i];
@@ -196,7 +226,13 @@ template ApproxSumcheckVerifySimple(v, nTerms, epsilonBits) {
     component qZero[v];
     component qOne[v];
     component next[v - 1];
+    component epsilonBitsCheck = Num2Bits(epsilonBits);
+    component absBits[v];
+    component slackBits[v];
     
+    // Range-check epsilon itself (verifier-chosen / public input recommended)
+    epsilonBitsCheck.num <== epsilon;
+
     for (var i = 0; i < v; i++) {
         qZero[i] = evalUnivariate(nTerms);
         qOne[i] = evalUnivariate(nTerms);
@@ -224,7 +260,11 @@ template ApproxSumcheckVerifySimple(v, nTerms, epsilonBits) {
         // Check error is within epsilon
         signal slack;
         slack <== epsilon - absError;
-        // Range check would go here in full implementation
+        // Range-check absError and slack (slack >= 0 enforces absError <= epsilon)
+        absBits[i] = Num2Bits(epsilonBits);
+        absBits[i].num <== absError;
+        slackBits[i] = Num2Bits(epsilonBits);
+        slackBits[i].num <== slack;
 
         if (i != v - 1) {
             next[i] = evalUnivariate(nTerms);

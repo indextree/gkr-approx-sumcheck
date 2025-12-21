@@ -420,7 +420,7 @@ def verify_fp_gkr(proof: FPGKRProof, expected_outputs: Optional[List[float]] = N
         if num_vars > 0:
             valid, layer_error = verify_approx_sumcheck(
                 claim, approx_proof, num_vars,
-                total_epsilon=proof.layer_epsilons[i]
+                base_delta=proof.layer_epsilons[i]
             )
             
             if not valid:

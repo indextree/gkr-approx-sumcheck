@@ -18,9 +18,14 @@ template VerifyGKR(meta) {
     // 8 ~ 8 + d - 1 : i --> k_i(i - 11)
     var d = meta[0];
     var largest_k = meta[1];
+    // Bit-width used for range checks inside approximate sumcheck.
+    // This should be set large enough to cover all expected deltas/errors.
+    var epsilonBits = 64;
 
     signal input sumcheckProof[d - 1][2 * largest_k][meta[4]];
     signal input sumcheckr[d - 1][2 * largest_k];
+    signal input sumcheckDeltas[d - 1][2 * largest_k];
+    signal input sumcheckErrorSigns[d - 1][2 * largest_k];
     signal input q[d - 1][meta[5]];
     signal input D[meta[3]][meta[2] + 1];
     signal input z[d][largest_k];
@@ -37,7 +42,7 @@ template VerifyGKR(meta) {
     component inputValue = evalMultivariate(meta[6], meta[7]);
 
     for (var i = 0; i < d - 1; i++) {
-        sumcheckVerifier[i] = SumcheckVerify(2 * meta[i + 9], meta[4]);
+        sumcheckVerifier[i] = ApproxSumcheckVerify(2 * meta[i + 9], meta[4], epsilonBits);
         if (i == 0) {
             sumcheckVerifier[i].claim <== 0;
         } else {
@@ -51,6 +56,10 @@ template VerifyGKR(meta) {
             for (var k = 0; k < meta[4]; k++) {
                 sumcheckVerifier[i].proofs[j][k] <== sumcheckProof[i][j][k];
             }
+        }
+        for (var j = 0; j < 2 * meta[i + 9]; j++) {
+            sumcheckVerifier[i].deltas[j] <== sumcheckDeltas[i][j];
+            sumcheckVerifier[i].errorSigns[j] <== sumcheckErrorSigns[i][j];
         }
 
         m[i] = evalUnivariate(meta[5]);

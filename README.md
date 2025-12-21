@@ -47,11 +47,11 @@ from gkr import prove_approx, verify_approx
 # Approximate sumcheck with error tolerance
 epsilon = field.FQ(100)  # Maximum error per round
 approx_proof = prove_approx_sumcheck(g, num_vars, start_idx, max_delta=epsilon)
-is_valid, accumulated_error = verify_approx_sumcheck(claim, approx_proof, num_vars)
+is_valid, accumulated_error = verify_approx_sumcheck(claim, approx_proof, num_vars, base_delta=epsilon)
 
 # Approximate GKR
 proof = prove_approx(circuit, D, max_delta=epsilon)
-is_valid, total_error = verify_approx(proof)
+is_valid, total_error = verify_approx(proof, max_delta=epsilon)
 
 # Standard exact verification (backward compatible)
 proof = prove(circuit, D)
@@ -78,7 +78,8 @@ let valid = verify_sumcheck(claim, &proof, &r, v);
 component verify = SumcheckVerify(v, nTerms);
 
 // Approximate sumcheck verification
-component approxVerify = ApproxSumcheckVerify(v, nTerms);
+// NOTE: epsilonBits is a range-check parameter for delta/error/slack (e.g., 32 or 64)
+component approxVerify = ApproxSumcheckVerify(v, nTerms, epsilonBits);
 approxVerify.deltas <== deltas;      // Per-round error bounds
 approxVerify.errorSigns <== signs;   // Sign hints for absolute value
 ```

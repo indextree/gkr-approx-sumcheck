@@ -8,6 +8,10 @@ use ff::PrimeField;
 pub struct Proof<S: PrimeField> {
     pub sumcheck_proofs: Vec<Vec<Vec<S>>>,
     pub sumcheck_r: Vec<Vec<S>>,
+    /// Per-round deltas for each sumcheck instance (outer = layer, inner = round)
+    pub sumcheck_deltas: Vec<Vec<S>>,
+    /// Per-round sign hints for each sumcheck instance (outer = layer, inner = round; each is 0/1)
+    pub sumcheck_error_signs: Vec<Vec<S>>,
     pub d: Vec<Vec<S>>,
     pub q: Vec<Vec<S>>,
     pub z: Vec<Vec<S>>,

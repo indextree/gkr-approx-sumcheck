@@ -6,6 +6,32 @@ try:
 except ImportError:
     import mimc
 
+def _ceil_div_int(a: int, b: int) -> int:
+    if b <= 0:
+        raise ValueError("b must be positive")
+    if a <= 0:
+        return 0
+    return (a + b - 1) // b
+
+
+def round_delta(base_delta: field.FQ, round_idx: int, B_size: int = 2) -> field.FQ:
+    """
+    Paper-aligned per-round tolerance scaling.
+
+    In Figure 2 of the paper, the verifier checks (for B={0,1}):
+      D(pk-1(rk-1), sum_{bk in B} pk(bk)) <= δ / |B|^{k-1}.
+
+    With 0-indexed round_idx (round 0 == k=1), this becomes:
+      δ_round = ceil(δ / |B|^{round_idx})
+
+    We use integer ceil-division because our "distance" is implemented via
+    `abs_field` on field-encoded integers, and comparisons are performed on ints.
+    """
+    if round_idx < 0:
+        raise ValueError("round_idx must be >= 0")
+    denom = B_size ** round_idx
+    return field.FQ(_ceil_div_int(int(base_delta), denom))
+
 # =============================================================================
 # Approximate Sum-Check Protocol
 # Based on "Sum-Check Protocol for Approximate Computations" (2025)
@@ -62,6 +88,11 @@ def prove_sumcheck(g: polynomial, v: int, start: int,
 
     r_1 = field.FQ(mimc.mimc_hash(list(map(lambda x : int(x), g_1.get_all_coefficients()))))
     r.append(r_1)
+
+    # v == 1 is a single-round sumcheck: the prover sends one univariate polynomial.
+    # (The final "evaluation check" against g is done by the surrounding protocol, e.g. GKR.)
+    if v == 1:
+        return proof, r
 
     # 1 < j < v round
     for j in range(1, v - 1):
@@ -130,16 +161,19 @@ def prove_approx_sumcheck(g: polynomial, v: int, start: int,
             g_1_sub = g_1_sub.eval_i(x_i, idx)
         g_1 += g_1_sub
     
-    # In approximate sumcheck, we may introduce error here
-    # For now, delta_1 = 0 for exact computation, or max_delta for approximate
     proof.append(g_1.get_all_coefficients())
-    deltas.append(max_delta)
+    delta_1 = round_delta(max_delta, 0)
+    deltas.append(delta_1)
     
     # Generate challenge using Fiat-Shamir (hash of polynomial + delta)
     hash_input = list(map(lambda x: int(x), g_1.get_all_coefficients()))
-    hash_input.append(int(max_delta))
+    hash_input.append(int(delta_1))
     r_1 = field.FQ(mimc.mimc_hash(hash_input))
     r.append(r_1)
+
+    # v == 1 is a single-round approximate sumcheck.
+    if v == 1:
+        return ApproxSumcheckProof(proof, deltas, r)
     
     # Rounds j = 2, ..., v-1
     for j in range(1, v - 1):
@@ -159,10 +193,11 @@ def prove_approx_sumcheck(g: polynomial, v: int, start: int,
             res_g_j += g_j_sub
         
         proof.append(res_g_j.get_all_coefficients())
-        deltas.append(max_delta)
+        delta_j = round_delta(max_delta, j)
+        deltas.append(delta_j)
         
         hash_input = list(map(lambda x: int(x), proof[-1]))
-        hash_input.append(int(max_delta))
+        hash_input.append(int(delta_j))
         r_n = field.FQ(mimc.mimc_hash(hash_input))
         r.append(r_n)
     
@@ -172,10 +207,11 @@ def prove_approx_sumcheck(g: polynomial, v: int, start: int,
         idx = i + start
         g_v = g_v.eval_i(r_i, idx)
     proof.append(g_v.get_all_coefficients())
-    deltas.append(max_delta)
+    delta_v = round_delta(max_delta, v - 1)
+    deltas.append(delta_v)
     
     hash_input = list(map(lambda x: int(x), proof[-1]))
-    hash_input.append(int(max_delta))
+    hash_input.append(int(delta_v))
     r_v = field.FQ(mimc.mimc_hash(hash_input))
     r.append(r_v)
     
@@ -220,6 +256,7 @@ def abs_field(x: field.FQ) -> field.FQ:
 def verify_approx_sumcheck(claim: field.FQ, 
                            approx_proof: ApproxSumcheckProof, 
                            v: int,
+                           base_delta: Optional[field.FQ] = None,
                            total_epsilon: Optional[field.FQ] = None) -> Tuple[bool, field.FQ]:
     """
     Approximate Sum-Check Verifier
@@ -243,10 +280,23 @@ def verify_approx_sumcheck(claim: field.FQ,
     r = approx_proof.r
     bn = len(proof)
     
-    # Compute total allowed error from per-round deltas
-    # According to the paper, error accumulates: epsilon_total = sum of delta_i
+    # If base_delta is provided, enforce paper-style per-round delta scaling and
+    # reject if the prover tries to choose deltas.
+    if base_delta is not None:
+        expected_deltas = [round_delta(base_delta, i) for i in range(bn)]
+        if len(deltas) != bn:
+            return False, field.FQ.zero()
+        for i in range(bn):
+            if deltas[i] != expected_deltas[i]:
+                return False, field.FQ.zero()
+        deltas_to_use = expected_deltas
+    else:
+        # Legacy / unsafe mode: trust prover-provided deltas.
+        deltas_to_use = deltas
+
+    # If caller didn't specify a global bound, use the (verifier-derived) sum of deltas.
     if total_epsilon is None:
-        total_epsilon = sum(deltas, field.FQ.zero())
+        total_epsilon = sum(deltas_to_use, field.FQ.zero())
     
     accumulated_error = field.FQ.zero()
     expected = claim
@@ -268,14 +318,14 @@ def verify_approx_sumcheck(claim: field.FQ,
         round_error = abs_field(actual_sum - expected)
         
         # Check if round error is within allowed delta for this round
-        if int(round_error) > int(deltas[i]):
+        if int(round_error) > int(deltas_to_use[i]):
             return False, accumulated_error + round_error
         
         accumulated_error = accumulated_error + round_error
         
         # Verify the random challenge was computed correctly (Fiat-Shamir)
         hash_input = list(map(lambda x: int(x), proof[i]))
-        hash_input.append(int(deltas[i]))
+        hash_input.append(int(deltas_to_use[i]))
         expected_r = field.FQ(mimc.mimc_hash(hash_input))
         if expected_r != r[i]:
             return False, accumulated_error

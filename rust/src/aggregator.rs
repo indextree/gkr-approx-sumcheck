@@ -22,6 +22,8 @@ struct Meta(Vec<usize>);
 pub struct CircomInputProof {
     pub sumcheckProof: Vec<Vec<Vec<String>>>,
     pub sumcheckr: Vec<Vec<String>>,
+    pub sumcheckDeltas: Vec<Vec<String>>,
+    pub sumcheckErrorSigns: Vec<Vec<String>>,
     pub q: Vec<Vec<String>>,
     pub D: Vec<Vec<String>>,
     pub z: Vec<Vec<String>>,
@@ -39,6 +41,8 @@ impl CircomInputProof {
         CircomInputProof {
             sumcheckProof: sp.clone(),
             sumcheckr: sr,
+            sumcheckDeltas: vec![vec![zero.clone()]],
+            sumcheckErrorSigns: vec![vec![zero.clone()]],
             q: q.clone(),
             D: q.clone(),
             z: q.clone(),
@@ -59,6 +63,18 @@ impl CircomInputProof {
             .iter()
             .map(|p| stringify_fr_vector(p))
             .collect();
+
+        let deltas: Vec<Vec<String>> = proof
+            .sumcheck_deltas
+            .iter()
+            .map(|p| stringify_fr_vector(p))
+            .collect();
+        let error_signs: Vec<Vec<String>> = proof
+            .sumcheck_error_signs
+            .iter()
+            .map(|p| stringify_fr_vector(p))
+            .collect();
+
         let q: Vec<Vec<String>> = proof.q.iter().map(|p| stringify_fr_vector(p)).collect();
         let d: Vec<Vec<String>> = proof.d.iter().map(|p| stringify_fr_vector(p)).collect();
         let z: Vec<Vec<String>> = proof.z.iter().map(|p| stringify_fr_vector(p)).collect();
@@ -72,6 +88,8 @@ impl CircomInputProof {
         CircomInputProof {
             sumcheckProof: sp,
             sumcheckr: sr,
+            sumcheckDeltas: deltas,
+            sumcheckErrorSigns: error_signs,
             q,
             D: d,
             z,
@@ -87,6 +105,13 @@ fn stringify_fr_vector(v: &Vec<Fr>) -> Vec<String> {
 
 fn zeros(l: usize) -> Vec<Fr> {
     vec![Fr::zero(); l]
+}
+
+fn prove_one(circuit: &GKRCircuit<Fr>, input: &Input<Fr>, max_delta: Option<Fr>) -> Proof<Fr> {
+    match max_delta {
+        Some(d) => prover::prove_approx(circuit, input, d),
+        None => prover::prove(circuit, input),
+    }
 }
 
 fn get_meta(proofs: &Vec<Proof<Fr>>) -> Vec<Meta> {
@@ -175,6 +200,24 @@ fn modify_proof_for_circom(proof: &Vec<Proof<Fr>>, meta_value: &Vec<Meta>) -> Ve
             sumcheck_r.push(new_p);
         }
 
+        let mut sumcheck_deltas = vec![];
+        for p in pr.sumcheck_deltas.iter() {
+            let mut new_p = p.clone();
+            if p.len() < 2 * meta[1] {
+                new_p.extend(zeros(2 * meta[1] - p.len()));
+            }
+            sumcheck_deltas.push(new_p);
+        }
+
+        let mut sumcheck_error_signs = vec![];
+        for p in pr.sumcheck_error_signs.iter() {
+            let mut new_p = p.clone();
+            if p.len() < 2 * meta[1] {
+                new_p.extend(zeros(2 * meta[1] - p.len()));
+            }
+            sumcheck_error_signs.push(new_p);
+        }
+
         let mut q = vec![];
         for p in pr.q.iter() {
             let mut new_p = p.clone();
@@ -199,6 +242,8 @@ fn modify_proof_for_circom(proof: &Vec<Proof<Fr>>, meta_value: &Vec<Meta>) -> Ve
         let new_p = Proof {
             sumcheck_proofs,
             sumcheck_r,
+            sumcheck_deltas,
+            sumcheck_error_signs,
             q,
             z,
             d: pr.d.clone(),
@@ -224,6 +269,8 @@ fn modify_circom_file(path: String, meta_value: &Vec<Meta>) -> String {
     var largest_k{{num}} = {{ meta_1 }};
     signal input sumcheckProof{{num}}[d{{num}} - 1][2 * largest_k{{num}}][{{ meta_4 }}];
     signal input sumcheckr{{num}}[d{{num}} - 1][2 * largest_k{{num}}];
+    signal input sumcheckDeltas{{num}}[d{{num}} - 1][2 * largest_k{{num}}];
+    signal input sumcheckErrorSigns{{num}}[d{{num}} - 1][2 * largest_k{{num}}];
     signal input q{{num}}[d{{num}} - 1][{{meta_5}}];
     signal input D{{num}}[{{meta_3}}][{{meta_2}} + 1];
     signal input z{{num}}[d{{num}}][largest_k{{num}}];
@@ -241,6 +288,12 @@ fn modify_circom_file(path: String, meta_value: &Vec<Meta>) -> String {
     for (var i = 0; i < a{{num}}; i++) {
         for (var j = 0; j < 2 * {{ meta_1 }}; j++) {
             verifier[{{num}}].sumcheckr[i][j] <== sumcheckr{{num}}[i][j];
+        }
+    }
+    for (var i = 0; i < a{{num}}; i++) {
+        for (var j = 0; j < 2 * {{ meta_1 }}; j++) {
+            verifier[{{num}}].sumcheckDeltas[i][j] <== sumcheckDeltas{{num}}[i][j];
+            verifier[{{num}}].sumcheckErrorSigns[i][j] <== sumcheckErrorSigns{{num}}[i][j];
         }
     }
     for (var i = 0; i < a{{num}}; i++) {
@@ -318,6 +371,15 @@ pub fn prove_recursively_circom(
     previous_proofs: Vec<Proof<Fr>>,
     input_path: String,
 ) -> Vec<Proof<Fr>> {
+    prove_recursively_circom_with_delta(circuit_path, previous_proofs, input_path, None)
+}
+
+pub fn prove_recursively_circom_with_delta(
+    circuit_path: String,
+    previous_proofs: Vec<Proof<Fr>>,
+    input_path: String,
+    max_delta: Option<Fr>,
+) -> Vec<Proof<Fr>> {
     let meta = get_meta(&previous_proofs);
     let modified_proof = modify_proof_for_circom(&previous_proofs, &meta);
     let mut p_vec = vec![];
@@ -351,7 +413,7 @@ pub fn prove_recursively_circom(
         result.0.iter().zip(result.1.iter()).collect();
     let proofs: Vec<Proof<Fr>> = circuit_input_pairs
         .par_iter()
-        .map(|(circuit, input)| prover::prove(circuit, input))
+        .map(|(circuit, input)| prove_one(circuit, input, max_delta))
         .collect();
 
     let time = report_elapsed(now);
@@ -383,6 +445,14 @@ pub fn prove_groth(circuit_path: String, previous_proofs: Vec<Proof<Fr>>, input_
 }
 
 pub fn prove_all(circuit_path: String, input_paths: Vec<String>) {
+    prove_all_with_delta(circuit_path, input_paths, None)
+}
+
+pub fn prove_all_approx(circuit_path: String, input_paths: Vec<String>, max_delta: Fr) {
+    prove_all_with_delta(circuit_path, input_paths, Some(max_delta))
+}
+
+fn prove_all_with_delta(circuit_path: String, input_paths: Vec<String>, max_delta: Option<Fr>) {
     // circom circuit --r1cs --sym --c
     // https://docs.circom.io/getting-started/computing-the-witness/#the-witness-file
     let mut proofs = None;
@@ -412,7 +482,7 @@ pub fn prove_all(circuit_path: String, input_paths: Vec<String>) {
                 result.0.iter().zip(result.1.iter()).collect();
             let new_proofs: Vec<Proof<Fr>> = circuit_input_pairs
                 .par_iter()
-                .map(|(circuit, input)| prover::prove(circuit, input))
+                .map(|(circuit, input)| prove_one(circuit, input, max_delta))
                 .collect();
 
             let time = report_elapsed(now);
@@ -425,10 +495,11 @@ pub fn prove_all(circuit_path: String, input_paths: Vec<String>) {
         } else if i == input_paths.len() - 1 {
             prove_groth(circuit_path.clone(), proofs.clone().unwrap(), input.clone());
         } else {
-            proofs = Some(prove_recursively_circom(
+            proofs = Some(prove_recursively_circom_with_delta(
                 circuit_path.clone(),
                 proofs.clone().unwrap(),
                 input.clone(),
+                max_delta,
             ));
         }
     }
@@ -436,10 +507,19 @@ pub fn prove_all(circuit_path: String, input_paths: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{modify_circom_file, prove_all};
+    use super::prove_all;
+    use std::process::Command;
+
+    fn circom_available() -> bool {
+        Command::new("circom").arg("--version").output().is_ok()
+    }
 
     #[test]
     fn test_proving() {
+        if !circom_available() {
+            eprintln!("circom not found in PATH; skipping test_proving");
+            return;
+        }
         let circuit_path = String::from("./t.circom");
         let mut input_paths = vec![];
         input_paths.push(String::from("./example/input1.json"));
@@ -450,6 +530,10 @@ mod tests {
 
     #[test]
     fn test_single_proof() {
+        if !circom_available() {
+            eprintln!("circom not found in PATH; skipping test_single_proof");
+            return;
+        }
         let circuit_path = String::from("./t.circom");
         let mut input_paths = vec![];
         input_paths.push(String::from("./example/input1.json"));

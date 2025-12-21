@@ -5,12 +5,13 @@ use std::time::Instant;
 use std::{io::Result, process::Command};
 
 extern crate gkr;
-use gkr::aggregator::prove_all;
+use gkr::aggregator::{prove_all, prove_all_approx};
 use gkr::fp_arithmetic::{
     IEEE754Float, FPGKRCircuit, FPCircuitLayer, FPOperation, FPResult,
     create_sum_circuit, create_product_circuit, create_dot_product_circuit,
     fp_add, fp_mul, compute_ulp,
 };
+use halo2curves::bn256::Fr;
 
 #[derive(Parser)]
 #[command(author, version, about = "GKR Aggregator with IEEE 754 Floating Point Support", long_about = None)]
@@ -27,6 +28,9 @@ enum Commands {
         circuit: String,
         #[arg(short, long, num_args=0..)]
         inputs: Vec<String>,
+        /// Base delta (as u64) to enable approximate sumcheck (deltas/errorSigns in circom input)
+        #[arg(long)]
+        max_delta: Option<u64>,
     },
     /// Generate mock Groth16 proof
     MockGroth {
@@ -332,10 +336,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Prove { circuit, inputs }) => {
+        Some(Commands::Prove { circuit, inputs, max_delta }) => {
             let circuit_path = circuit.clone();
             let input_paths = inputs.clone();
-            prove_all(circuit_path, input_paths);
+            if let Some(d) = max_delta {
+                prove_all_approx(circuit_path, input_paths, Fr::from(d));
+            } else {
+                prove_all(circuit_path, input_paths);
+            }
         }
         Some(Commands::MockGroth { zkey }) => {
             println!("mock groth16 running..");

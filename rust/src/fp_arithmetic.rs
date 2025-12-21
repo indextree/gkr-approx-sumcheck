@@ -500,9 +500,6 @@ pub fn create_product_circuit<S: PrimeField>(n: usize) -> FPGKRCircuit<S> {
 mod tests {
     use super::*;
     
-    // Use a simple field for testing
-    type TestField = ff::PrimeField;
-    
     #[test]
     fn test_ieee754_conversion() {
         let test_values = [0.0f32, 1.0, -1.0, 3.14159, 1e10, 1e-10, 0.1];

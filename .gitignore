@@ -5,3 +5,4 @@
 *.r1cs
 *.json
 *.ptau
+**/__pycache__
