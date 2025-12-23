@@ -293,7 +293,7 @@ cd rust
 ### 4. Create GKR proof for inputs
 You can give inputs by commands:
 ```sh
-gkr-aggregator prove -c circuit.circom -i ./example/input1.json ./example/input2.json ./example/input3.json
+gkr-aggregator prove -c t.circom -i ./example/input1.json ./example/input2.json ./example/input3.json
 ```
 
 You can get a message from cli:

@@ -108,6 +108,12 @@ struct IntermediateLayer<T> {
 fn merge_nodes(
     nodes: Vec<IntermediateNode<FieldElement<32>>>,
 ) -> IntermediateNode<FieldElement<32>> {
+    // In R1CS, A/B/C can be empty (=0).
+    // The previous implementation recursed infinitely when nodes.len() == 0, causing a stack overflow.
+    // Treating the sum of an empty set as zero is the natural behavior.
+    if nodes.is_empty() {
+        return zero_node();
+    }
     if nodes.len() == 1 {
         return nodes[0].clone();
     }

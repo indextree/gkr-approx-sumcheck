@@ -134,7 +134,12 @@ fn get_meta(proofs: &Vec<Proof<Fr>>) -> Vec<Meta> {
         meta.push(proof.k[0]);
 
         // meta[3] = # of terms of D
-        let n_terms_d = proof.d.len();
+        //
+        // NOTE: In Circom(2.x), if a zero-length array (e.g. `signal input D[0][...]`) exists,
+        // a divide-by-zero panic has been observed during the `build_io_map` stage.
+        // The current `VerifyGKR` template in `verifier.circom` does not use `D`,
+        // so we force meta[3] to be at least 1 and pad `Proof.d` with zeros accordingly.
+        let n_terms_d = proof.d.len().max(1);
         meta.push(n_terms_d);
 
         // meta[4] = largest # of terms among sumcheck proofs (highest degree)
@@ -239,6 +244,22 @@ fn modify_proof_for_circom(proof: &Vec<Proof<Fr>>, meta_value: &Vec<Meta>) -> Ve
             z.push(new_p);
         }
 
+        // D (meta[3] x (meta[2] + 1)) is currently unused in verifier.circom,
+        // but Circom panics on zero-length arrays, so we pad it to at least 1 row.
+        let mut d = pr.d.clone();
+        let d_rows = meta[3];
+        let d_cols = meta[2] + 1;
+        for row in d.iter_mut() {
+            if row.len() < d_cols {
+                row.extend(zeros(d_cols - row.len()));
+            }
+        }
+        if d.len() < d_rows {
+            for _ in 0..(d_rows - d.len()) {
+                d.push(zeros(d_cols));
+            }
+        }
+
         let new_p = Proof {
             sumcheck_proofs,
             sumcheck_r,
@@ -246,7 +267,7 @@ fn modify_proof_for_circom(proof: &Vec<Proof<Fr>>, meta_value: &Vec<Meta>) -> Ve
             sumcheck_error_signs,
             q,
             z,
-            d: pr.d.clone(),
+            d,
             r: pr.r.clone(),
             depth: pr.depth,
             input_func: pr.input_func.clone(),
@@ -272,7 +293,9 @@ fn modify_circom_file(path: String, meta_value: &Vec<Meta>) -> String {
     signal input sumcheckDeltas{{num}}[d{{num}} - 1][2 * largest_k{{num}}];
     signal input sumcheckErrorSigns{{num}}[d{{num}} - 1][2 * largest_k{{num}}];
     signal input q{{num}}[d{{num}} - 1][{{meta_5}}];
+    {% if has_d %}
     signal input D{{num}}[{{meta_3}}][{{meta_2}} + 1];
+    {% endif %}
     signal input z{{num}}[d{{num}}][largest_k{{num}}];
     signal input r{{num}}[d{{num}} - 1];
     signal input inputFunc{{num}}[{{meta_6}}][{{meta_7}} + 1];
@@ -301,11 +324,13 @@ fn modify_circom_file(path: String, meta_value: &Vec<Meta>) -> String {
             verifier[{{num}}].q[i][j] <== q{{num}}[i][j];
         }
     }
+    {% if has_d %}
     for (var i = 0; i < {{ meta_3 }}; i++) {
         for (var j = 0; j < {{ meta_2 }} + 1; j++) {
             verifier[{{num}}].D[i][j] <== D{{num}}[i][j];
         }
     }
+    {% endif %}
     for (var i = 0; i < a{{num}} + 1; i++) {
         for (var j = 0; j < {{ meta_1 }}; j++) {
             verifier[{{num}}].z[i][j] <== z{{num}}[i][j];
@@ -338,6 +363,9 @@ fn modify_circom_file(path: String, meta_value: &Vec<Meta>) -> String {
 
             ctxt.insert(name, &value_string);
         }
+        // Add a flag indicating whether meta_3 > 0
+        let has_d = m.0.get(3).map(|&v| v > 0).unwrap_or(false);
+        ctxt.insert("has_d", &has_d);
         let s = added.render("verifier", &ctxt).unwrap();
         v = format!("{}\n{}", v, s);
     }

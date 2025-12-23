@@ -137,6 +137,8 @@ template ApproxSumcheckVerify(v, nTerms, epsilonBits) {
     signal roundErrors[v];
     signal cumulativeErrors[v + 1];
     signal slack[v];
+    signal actualSum[v];
+    signal rawError[v];
     
     expected[0] <== claim;
     cumulativeErrors[0] <== 0;
@@ -162,17 +164,15 @@ template ApproxSumcheckVerify(v, nTerms, epsilonBits) {
         }
 
         // Compute the actual sum
-        signal actualSum;
-        actualSum <== qZero[i].result + qOne[i].result;
+        actualSum[i] <== qZero[i].result + qOne[i].result;
 
         // Compute the error: error = actualSum - expected[i]
-        signal rawError;
-        rawError <== actualSum - expected[i];
+        rawError[i] <== actualSum[i] - expected[i];
 
         // Compute absolute error using the sign hint
         // If errorSigns[i] == 1, the error is "negative" (> p/2), so abs = -rawError
         // If errorSigns[i] == 0, the error is positive, so abs = rawError
-        roundErrors[i] <== rawError * (1 - 2 * errorSigns[i]);
+        roundErrors[i] <== rawError[i] * (1 - 2 * errorSigns[i]);
         
         // Constraint: errorSigns[i] must be 0 or 1
         errorSigns[i] * (1 - errorSigns[i]) === 0;
@@ -221,6 +221,10 @@ template ApproxSumcheckVerifySimple(v, nTerms, epsilonBits) {
     signal output isValid;
 
     signal expected[v + 1];
+    signal actualSum[v];
+    signal rawError[v];
+    signal absError[v];
+    signal slack[v];
     expected[0] <== claim;
 
     component qZero[v];
@@ -246,25 +250,21 @@ template ApproxSumcheckVerifySimple(v, nTerms, epsilonBits) {
         }
 
         // Compute error
-        signal actualSum;
-        actualSum <== qZero[i].result + qOne[i].result;
+        actualSum[i] <== qZero[i].result + qOne[i].result;
         
-        signal rawError;
-        rawError <== actualSum - expected[i];
+        rawError[i] <== actualSum[i] - expected[i];
 
         // Absolute error
-        signal absError;
-        absError <== rawError * (1 - 2 * errorSigns[i]);
+        absError[i] <== rawError[i] * (1 - 2 * errorSigns[i]);
         errorSigns[i] * (1 - errorSigns[i]) === 0;
 
         // Check error is within epsilon
-        signal slack;
-        slack <== epsilon - absError;
+        slack[i] <== epsilon - absError[i];
         // Range-check absError and slack (slack >= 0 enforces absError <= epsilon)
         absBits[i] = Num2Bits(epsilonBits);
-        absBits[i].num <== absError;
+        absBits[i].num <== absError[i];
         slackBits[i] = Num2Bits(epsilonBits);
-        slackBits[i].num <== slack;
+        slackBits[i].num <== slack[i];
 
         if (i != v - 1) {
             next[i] = evalUnivariate(nTerms);
